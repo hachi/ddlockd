@@ -24,14 +24,16 @@ $DEBUG = 0;
 
 my (
     $daemonize,
+    $nokeepalive,
    );
 my $conf_port = 7002;
 
 Getopt::Long::GetOptions(
-			 'd|daemon' => \$daemonize,
-			 'p|port'   => \$conf_port,
-			 'debug=i'  => \$DEBUG,
-			 );
+    'd|daemon'       => \$daemonize,
+    'p|port'         => \$conf_port,
+    'debug=i'        => \$DEBUG,
+    'n|no-keepalive' => \$nokeepalive,
+   );
 
 daemonize() if $daemonize;
 
@@ -60,12 +62,14 @@ my $accept_handler = sub {
     setsockopt($csock, IPPROTO_TCP, TCP_NODELAY, pack("l", 1)) or die;
 
     # Enable keep alive
-    (setsockopt($csock, SOL_SOCKET, SO_KEEPALIVE,  pack("l", 1)) &&
-     setsockopt($csock, IPPROTO_TCP, TCP_KEEPIDLE,  pack("l", 30)) &&
-     setsockopt($csock, IPPROTO_TCP, TCP_KEEPCNT,   pack("l", 10)) &&   
-     setsockopt($csock, IPPROTO_TCP, TCP_KEEPINTVL, pack("l", 30)) &&
-     1
-     ) || die "Couldn't set keep-alive settings on socket (Not on Linux?)";
+    unless ( $nokeepalive ) {
+        (setsockopt($csock, SOL_SOCKET, SO_KEEPALIVE,  pack("l", 1)) &&
+         setsockopt($csock, IPPROTO_TCP, TCP_KEEPIDLE,  pack("l", 30)) &&
+         setsockopt($csock, IPPROTO_TCP, TCP_KEEPCNT,   pack("l", 10)) &&
+         setsockopt($csock, IPPROTO_TCP, TCP_KEEPINTVL, pack("l", 30)) &&
+         1
+        ) || die "Couldn't set keep-alive settings on socket (Not on Linux?)";
+    }
 
     my $client = Client->new($csock);
     $client->watch_read(1);
@@ -175,7 +179,7 @@ sub close {
 sub _release_lock {
     my Client $self = shift;
     my $lock = shift;
-    
+
     # TODO: notify waiters
     delete $self->{locks}{$lock};
     delete $holder{$lock};
@@ -220,7 +224,7 @@ sub cmd_releaselock {
 sub cmd_locks {
     my Client $self = shift;
     my $args = shift;
-    
+
     $self->write("LOCKS:\n");
     foreach my $k (sort keys %holder) {
 	$self->write("  $k = " . $holder{$k}->as_string . "\n");
