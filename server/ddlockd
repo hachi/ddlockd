@@ -18,6 +18,7 @@ use Getopt::Long;
 use Carp;
 use Danga::Socket;
 use IO::Socket::INET;
+use POSIX ();
 
 use vars qw($DEBUG);
 $DEBUG = 0;
