@@ -135,8 +135,8 @@ sub release {
         chomp( $res = <$sock> );
 
         unless ( $res =~ m{^ok\b}i ) {
-            my ($port, $iaddr) = sockaddr_in( getpeername($sock) );
-            my $addr = inet_ntoa( $iaddr );
+            my $port = $sock->peerport;
+            my $addr = $sock->peerhost;
             die "releaselock ($addr): $res\n";
         }
 
@@ -152,7 +152,7 @@ sub release {
 sub eurl
 {
     my $a = $_[0];
-    $a =~ s/([^a-zA-Z0-9_\,\-.\/\\\: ])/uc sprintf("%%%02x",ord($1))/eg;
+    $a =~ s/([^a-zA-Z0-9_,.\\: -])/uc sprintf("%%%02x",ord($1))/eg;
     $a =~ tr/ /+/;
     return $a;
 }
@@ -165,13 +165,12 @@ sub eurl
 package DDFileLock;
 
 BEGIN {
-    use File::lockf qw{};
-    use Fcntl qw{O_CREAT O_WRONLY};
+    use Fcntl qw{:DEFAULT :flock};
     use File::Spec qw{};
     use File::Path qw{mkpath};
     use IO::File qw{};
 
-    use fields qw{name fh path lock};
+    use fields qw{name fh path locked};
 }
 
 
@@ -184,26 +183,25 @@ sub new {
     $self = fields::new( $self ) unless ref $self;
     my ( $name, $lockdir ) = @_;
 
+    $self->{locked} = 0;
     $lockdir ||= $TmpDir;
     if ( ! -d $lockdir ) {
         # Croaks if it fails, so no need for error-checking
         mkpath $lockdir;
     }
 
-    $self->{path} = File::Spec->catfile( $lockdir, $name );
+    $self->{path} = File::Spec->catfile( $lockdir, eurl($name) );
+    #print STDERR "Opening lockfile $self->{path}\n";
     $self->{fh} = new IO::File $self->{path}, O_WRONLY|O_CREAT
-        or die "open: $lockfile: $!\n";
-    $self->{lock} = new File::lockf( $self->{fh} )
-        or die "lockf: $lockfile: $!\n";
-
-    # Attempt to lock the file
-    unless ( (my $res = $self->{lock}->tlock( 0 )) == 0 ) {
-        $! = $res;
-        die "Failed to acquire lock: $!\n";
-    }
+        or die "open: $self->{path}: $!\n";
+    #print STDERR "Flocking $self->{fh}\n";
+    flock( $self->{fh}, LOCK_EX|LOCK_NB )
+        or die "flock: $self->{path}: $!\n";
+    #print STDERR "Lock on $self->{path} [$$] succeeded.\n";
 
     # Write the PID to the file just in case lockf malfuctions for some reason.
     $self->{fh}->print( $$ );
+    $self->{locked} = 1;
 
     return $self;
 }
@@ -214,7 +212,20 @@ sub new {
 sub release {
     my DDFileLock $self = shift;
     unlink $self->{path};
-    $self->{lock}->ulock( 0 );
+    #print STDERR "About to unlock $self->{path} [$$].\n";
+    flock( $self->{fh}, LOCK_UN ) or die "unlock failed on $self->{path}: $!";
+    #print STDERR "Unlocked $self->{path} [$$].\n";
+}
+
+
+### FUNCTION: eurl( $arg )
+### URL-encode the given I<arg> and return it.
+sub eurl
+{
+    my $a = $_[0];
+    $a =~ s/([^a-zA-Z0-9_,.\\: -])/sprintf("%%%02X",ord($1))/eg;
+    $a =~ tr/ /+/;
+    return $a;
 }
 
 
