@@ -129,12 +129,15 @@ sub release {
         $sock,
        );
 
+    # lock server might have gone away, but we don't really care.
+    local $SIG{'PIPE'} = "IGNORE";
+
     $count = 0;
     while (( $sock = shift @{$self->{sockets}} )) {
         $sock->printf( "releaselock lock=%s%s", eurl($self->{name}), CRLF );
         chomp( $res = <$sock> );
 
-        unless ( $res =~ m{^ok\b}i ) {
+        if ( $res && $res !~ m{^ok\b}i ) {
             my $port = $sock->peerport;
             my $addr = $sock->peerhost;
             die "releaselock ($addr): $res\n";
