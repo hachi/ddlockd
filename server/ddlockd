@@ -30,7 +30,7 @@ my $conf_port = 7002;
 
 Getopt::Long::GetOptions(
     'd|daemon'       => \$daemonize,
-    'p|port'         => \$conf_port,
+    'p|port=i'       => \$conf_port,
     'debug=i'        => \$DEBUG,
     'n|no-keepalive' => \$nokeepalive,
    );
