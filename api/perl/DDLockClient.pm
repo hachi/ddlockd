@@ -51,8 +51,14 @@ Copyright (c) 2004 Danga Interactive, Inc.
 #####################################################################
 package DDLock;
 
-use Socket qw{:DEFAULT :crlf};
-use fields qw( name sockets );
+BEGIN {
+    use Socket qw{:DEFAULT :crlf};
+    use IO::Socket::INET ();
+
+    use fields qw( name sockets );
+}
+
+
 
 ### (CONSTRUCTOR) METHOD: new( $name, @sockets )
 ### Create a new lock object that corresponds to the specified I<name> and is
@@ -62,9 +68,48 @@ sub new {
     $self = fields::new( $self ) unless ref $self;
 
     $self->{name} = shift;
-    $self->{sockets} = \@_;
+    $self->{sockets} = $self->getlocks( $self->{name}, @_ );
 
     return $self;
+}
+
+
+### (PROTECTED) METHOD: getlocks( $lockname, @servers )
+### Try to obtain locks with the specified I<lockname> from one or more of the
+### given I<servers>.
+sub getlocks {
+    my DDLock $self = shift;
+    my $lockname = shift;
+    my @servers = @_;
+
+    my (
+        @sockets,
+        $sock,
+        $res,
+       );
+
+    # First create connected sockets to all the lock hosts
+    @sockets = ();
+  SERVER: foreach my $server ( @servers ) {
+        my ( $host, $port ) = split /:/, $server;
+        my $sock = new IO::Socket::INET (
+            PeerAddr    => $host,
+            PeerPort    => $port,
+            Proto       => "tcp",
+            Type        => SOCK_STREAM,
+            ReuseAddr   => 1,
+            Blocking    => 1,
+           ) or next SERVER;
+
+        $sock->print( "trylock lock=$lockname$CRLF" );
+        chomp( $res = <$sock> );
+        die "$server: '$lockname' $res\n" unless $res =~ m{^ok\b}i;
+
+        push @sockets, $sock;
+    }
+
+    die "No available lock hosts" unless @sockets;
+    return \@sockets;
 }
 
 
@@ -88,7 +133,7 @@ sub release {
         unless ( $res =~ m{^ok\b}i ) {
             my ($port, $iaddr) = sockaddr_in( getpeername($sock) );
             my $addr = inet_ntoa( $iaddr );
-            die "releaselock ($addr): $res";
+            die "releaselock ($addr): $res\n";
         }
 
         $count++;
@@ -99,15 +144,68 @@ sub release {
 
 
 #####################################################################
+###	D D F I L E L O C K   C L A S S
+#####################################################################
+package DDFileLock;
+
+BEGIN {
+    use File::lockf qw{};
+    use Fcntl qw{O_CREAT O_WRONLY};
+    use File::Spec qw{};
+    use IO::File qw{};
+
+    use fields qw{name fh lock};
+}
+
+
+our $TmpDir = File::Spec->tmpdir;
+
+### (CONSTRUCTOR) METHOD: new( $lockname )
+### Createa a new file-based lock with the specified I<lockname>.
+sub new {
+    my DDFileLock $self = shift;
+    $self = fields::new( $self ) unless ref $self;
+    my ( $name, $lockdir ) = @_;
+
+    $lockdir ||= $TmpDir;
+
+    my $lockfile = File::Spec->catfile( $lockdir, $name );
+    $self->{fh} = new IO::File $lockfile, O_WRONLY|O_CREAT
+        or die "open: $lockfile: $!\n";
+    $self->{lock} = new File::lockf( $self->{fh} )
+        or die "lockf: $lockfile: $!\n";
+
+    # Attempt to lock the file
+    unless ( (my $res = $self->{lock}->tlock( 0 )) == 0 ) {
+        $! = $res;
+        die "Failed to acquire lock: $!\n";
+    }
+
+    # Write the PID to the file just in case lockf malfuctions for some reason.
+    $self->{fh}->print( $$ );
+
+    return $self;
+}
+
+
+### METHOD: release()
+### Release the lock held by the object.
+sub release {
+    my DDFileLock $self = shift;
+    return ( ($self->{lock}->ulock( 0 )) == 0 );
+}
+
+
+
+
+#####################################################################
 ###	D D L O C K C L I E N T   C L A S S
 #####################################################################
 package DDLockClient;
 use strict;
 
 BEGIN {
-    use Socket qw{:DEFAULT :crlf};
-    use IO::Socket::INET ();
-    use fields qw( servers );
+    use fields qw( servers lockdir );
     use vars qw{$Error};
 }
 
@@ -155,10 +253,10 @@ sub new {
     my %args = @_;
 
     $self = fields::new( $self ) unless ref $self;
-    die "Need 'servers' arrayref parameter to DDLockClient constructor"
-        unless ref $args{servers} eq "ARRAY" && @{$args{servers}};
-    #$self->{servers} = $self->make_server_list( @{$args{servers}} );
-    $self->{servers} = $args{servers};
+    die "Servers argument must be an arrayref if specified"
+        unless ref $args{servers};
+    $self->{servers} = $args{servers} || [];
+    $self->{lockdir} = $args{lockdir} || '';
 
     return $self;
 }
@@ -171,45 +269,27 @@ sub trylock {
     my DDLockClient $self = shift;
     my $lockname = shift;
 
-    my (
-        @sockets,
-        $sock,
-        $res,
-       );
+    my $lock;
 
-    # First create connected sockets to all the lock hosts
-    @sockets = ();
-  SERVER: foreach my $server ( @{$self->{servers}} ) {
-        my ( $host, $port ) = split /:/, $server;
-        my $sock = new IO::Socket::INET (
-            PeerAddr    => $host,
-            PeerPort    => $port,
-            Proto       => "tcp",
-            Type        => SOCK_STREAM,
-            ReuseAddr   => 1,
-            Blocking    => 1,
-           ) or next SERVER;
-
-        $self->DebugMsg( 3, "Connected to %s:%d", $host, $port );
-        $self->DebugMsg( 5, "Sending command: trylock lock=$lockname" );
-        $sock->print( "trylock lock=$lockname$CRLF" );
-        chomp( $res = <$sock> );
-        $self->DebugMsg( 5, "Got response: $res" );
-        unless ( $res =~ m{^ok\b}i ) {
-            $self->DebugMsg( 3, "Failed lock: $res." );
-            return $self->lock_fail( "$server: '$lockname' $res" );
-        }
-
-        $self->DebugMsg( 2, "Adding $server to the list of lock hosts" );
-        push @sockets, $sock;
+    # If there are servers to connect to, use a network lock
+    if ( @{$self->{servers}} ) {
+        $self->DebugMsg( 2, "Creating a new DDLock object." );
+        $lock = eval { DDLock->new($lockname, @{$self->{servers}}) };
     }
 
-    $self->DebugMsg( 1, "Got locks on %d hosts", scalar @sockets );
-    return $self->lock_fail( "No available lock hosts" ) unless @sockets;
+    # Otherwise use a file lock
+    else {
+        $self->DebugMsg( 2, "No servers configured: Creating a new DDFileLock object." );
+        $lock = eval { DDFileLock->new($lockname, $self->{lockdir}) };
+    }
 
-    # Now create a lock object to contain the connected sockets.
-    $self->DebugMsg( 2, "Returning new DDLock object." );
-    return DDLock->new( $lockname, @sockets );
+    # If no lock was acquired, fail and put the reason in $Error.
+    unless ( $lock ) {
+        return $self->lock_fail( $@ ) if $@;
+        return $self->lock_fail( "Unknown failure." );
+    }
+
+    return $lock;
 }
 
 
@@ -224,26 +304,8 @@ sub lock_fail {
 }
 
 
-### (PROTECTED) METHOD: make_server_list( @hosts )
-### Given a list of I<hosts> in the format "hostname:port", create and return an
-### array of sorted inetaddr records.
-sub make_server_list {
-    my DDLockClient $self = shift;
-    my @hosts = @_;
-
-    my @inetaddrs = ();
-    foreach my $host ( @hosts ) {
-        my ( $addr, $port ) = split /:/, $host;
-        push @inetaddrs, scalar sockaddr_in( $port, inet_aton($addr) );
-    }
-
-    return [ sort { $a cmp $b } @inetaddrs ];
-}
-
-
-
-
 1;
+
 
 # Local Variables:
 # mode: perl
