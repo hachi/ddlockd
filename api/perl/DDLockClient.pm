@@ -57,7 +57,7 @@ BEGIN {
 
     use constant DEFAULT_PORT => 7002;
 
-    use fields qw( name sockets );
+    use fields qw( name sockets pid );
 }
 
 
@@ -69,6 +69,7 @@ sub new {
     my DDLock $self = shift;
     $self = fields::new( $self ) unless ref $self;
 
+    $self->{pid} = $$;
     $self->{name} = shift;
     $self->{sockets} = $self->getlocks( $self->{name}, @_ );
 
@@ -173,7 +174,7 @@ BEGIN {
     use File::Path qw{mkpath};
     use IO::File qw{};
 
-    use fields qw{name path tmpfile};
+    use fields qw{name path tmpfile pid};
 }
 
 
@@ -186,7 +187,8 @@ sub new {
     $self = fields::new( $self ) unless ref $self;
     my ( $name, $lockdir ) = @_;
 
-    #$self->{locked} = 0;
+    $self->{pid} = $$;
+
     $lockdir ||= $TmpDir;
     if ( ! -d $lockdir ) {
         # Croaks if it fails, so no need for error-checking
@@ -239,9 +241,10 @@ sub eurl
 }
 
 
-DESTROY { my $self = shift; $self->release; }
-
-
+DESTROY {
+    my $self = shift;
+    $self->release if $$ == $self->{pid};
+}
 
 
 #####################################################################
