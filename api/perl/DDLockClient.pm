@@ -170,7 +170,7 @@ BEGIN {
     use File::Path qw{mkpath};
     use IO::File qw{};
 
-    use fields qw{name fh path locked};
+    use fields qw{name path tmpfile};
 }
 
 
@@ -190,18 +190,26 @@ sub new {
         mkpath $lockdir;
     }
 
-    $self->{path} = File::Spec->catfile( $lockdir, eurl($name) );
-    #print STDERR "Opening lockfile $self->{path}\n";
-    $self->{fh} = new IO::File $self->{path}, O_WRONLY|O_CREAT
-        or die "open: $self->{path}: $!\n";
-    #print STDERR "Flocking $self->{fh}\n";
-    flock( $self->{fh}, LOCK_EX|LOCK_NB )
-        or die "flock: $self->{path}: $!\n";
-    #print STDERR "Lock on $self->{path} [$$] succeeded.\n";
+    my $lockfile = File::Spec->catfile( $lockdir, eurl($name) );
 
-    # Write the PID to the file just in case lockf malfuctions for some reason.
-    $self->{fh}->print( $$ );
-    $self->{locked} = 1;
+    # First open a temp file
+    my $tmpfile = "$lockfile.$$.tmp";
+    if ( -e $tmpfile ) {
+        unlink $tmpfile or die "unlink: $tmpfile: $!";
+    }
+
+    my $fh = new IO::File $tmpfile, O_WRONLY|O_CREAT|O_EXCL
+        or die "open: $tmpfile: $!";
+    $fh->close;
+    undef $fh;
+
+    # Now try to make a hard link to it
+    link( $tmpfile, $lockfile )
+        or die "link: $tmpfile -> $lockfile: $!";
+    unlink $tmpfile or die "unlink: $tempfile: $!";
+
+    $self->{path} = $lockfile;
+    $self->{tmpfile} = $tmpfile;
 
     return $self;
 }
@@ -211,10 +219,9 @@ sub new {
 ### Release the lock held by the object.
 sub release {
     my DDFileLock $self = shift;
-    unlink $self->{path};
-    #print STDERR "About to unlock $self->{path} [$$].\n";
-    flock( $self->{fh}, LOCK_UN ) or die "unlock failed on $self->{path}: $!";
-    #print STDERR "Unlocked $self->{path} [$$].\n";
+    return unless $self->{path};
+    unlink $self->{path} or die "unlink: $self->{path}: $!";
+    unlink $self->{tmpfile};
 }
 
 
@@ -290,7 +297,7 @@ sub new {
 
     $self = fields::new( $self ) unless ref $self;
     die "Servers argument must be an arrayref if specified"
-        unless ref $args{servers};
+        unless !exists $args{servers} || ref $args{servers} eq 'ARRAY';
     $self->{servers} = $args{servers} || [];
     $self->{lockdir} = $args{lockdir} || '';
 
