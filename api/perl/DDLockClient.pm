@@ -152,6 +152,7 @@ BEGIN {
     use File::lockf qw{};
     use Fcntl qw{O_CREAT O_WRONLY};
     use File::Spec qw{};
+    use File::Path qw{mkpath};
     use IO::File qw{};
 
     use fields qw{name fh lock};
@@ -168,6 +169,10 @@ sub new {
     my ( $name, $lockdir ) = @_;
 
     $lockdir ||= $TmpDir;
+    if ( ! -d $lockdir ) {
+        # Croaks if it fails, so no need for error-checking
+        mkpath $lockdir;
+    }
 
     my $lockfile = File::Spec->catfile( $lockdir, $name );
     $self->{fh} = new IO::File $lockfile, O_WRONLY|O_CREAT
