@@ -183,7 +183,7 @@ sub new {
     $self = fields::new( $self ) unless ref $self;
     my ( $name, $lockdir ) = @_;
 
-    $self->{locked} = 0;
+    #$self->{locked} = 0;
     $lockdir ||= $TmpDir;
     if ( ! -d $lockdir ) {
         # Croaks if it fails, so no need for error-checking
