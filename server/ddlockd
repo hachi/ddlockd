@@ -45,6 +45,7 @@ use constant TCP_KEEPIDLE  => 4; # Start keeplives after this period
 use constant TCP_KEEPINTVL => 5; # Interval between keepalives
 use constant TCP_KEEPCNT   => 6; # Number of keepalives before death
 
+$SIG{'PIPE'} = "IGNORE";  # handled manually
 
 # establish SERVER socket, bind and listen.
 my $server = IO::Socket::INET->new(LocalPort => $conf_port,
