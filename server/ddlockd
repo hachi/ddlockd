@@ -50,8 +50,8 @@ $SIG{'PIPE'} = "IGNORE";  # handled manually
 # establish SERVER socket, bind and listen.
 my $server = IO::Socket::INET->new(LocalPort => $conf_port,
                                    Type      => SOCK_STREAM,
-                                   Proto     => 'tcp',
-                                   Blocking  => 1,
+                                   Proto     => IPPROTO_TCP,
+                                   Blocking  => 0,
                                    Reuse     => 1,
                                    Listen    => 10 )
     or die "Error creating socket: $@\n";
