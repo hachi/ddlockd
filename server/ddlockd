@@ -127,7 +127,8 @@ package Client;
 use Danga::Socket;
 use base 'Danga::Socket';
 use fields (
-	    'locks',  # hashref of locks held by this connection. values are 1
+            'locks',  # hashref of locks held by this connection. values are 1
+            'read_buf',
 	    );
 
 our (%holder);  # hash of lock -> Client object holding it
@@ -139,6 +140,7 @@ sub new {
     $self->SUPER::new( @_ );
 
     $self->{locks} = {};
+    $self->{read_buf} = '';
     return $self;
 }
 
