@@ -12,7 +12,7 @@ $| = 1;
 my $DDServers =  [
 	'localhost:7003',
 	'localhost:7004',
-	'localhost:7002',
+	'localhost',
    ];
 
 foreach my $servers ( $DDServers, [] ) {
