@@ -13,8 +13,6 @@
 #   undecided.
 #
 
-package Mgd;
-
 use strict;
 use Getopt::Long;
 use Carp;
