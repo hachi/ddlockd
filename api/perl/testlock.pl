@@ -9,31 +9,38 @@ $Data::Dumper::Indent = 1;
 
 $| = 1;
 
-DDLockClient->DebugLevel( 5 );
-
-my $servers =  [
+my $DDServers =  [
 	'localhost:7003',
 	'localhost:7004',
 	'localhost:7002',
    ];
 
-print "Creating client...";
-my $cl = new DDLockClient ( servers => $servers )
-	or die $DDLockClient::Error;
-print "done:\n", Data::Dumper->Dumpxs( [$cl], [qw{cl}] ), "\n";
+foreach my $servers ( $DDServers, [] ) {
+	print "Creating client...";
+	my $cl = new DDLockClient ( servers => $servers )
+		or die $DDLockClient::Error;
+	print "done:\n";
 
-print "Creating a 'foo' lock...";
-my $lock = $cl->trylock( "foo" )
-	or die $DDLockClient::Error;
-print "done:.\n", Data::Dumper->Dumpxs( [$lock], [qw{lock}] ), "\n";
+	print "Creating a 'foo' lock...";
+	my $lock = $cl->trylock( "foo" )
+		or print "Error: $DDLockClient::Error\n";
+	print "done.\n";
 
-print "Trying to create a second 'foo' lock...";
-my $lock2 = $cl->trylock( "foo" );
-print "done:\n$DDLockClient::Error\n";
+	if ( my $pid = fork ) {
+		waitpid( $pid, 0 );
+	} else {
+		print "Trying to create a 'foo' lock in process $$...";
+		my $lock2 = $cl->trylock( "foo" )
+			or print "Error: $DDLockClient::Error\n";
+		print "done:\n";
+		exit;
+	}
 
-print "Releasing the 'foo' lock...";
-$lock->release or die;
-print "done.\n\n";
+	print "Releasing the 'foo' lock...";
+	$lock->release or die;
+	print "done.\n\n";
+}
+
 
 
 
