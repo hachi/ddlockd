@@ -56,11 +56,19 @@ my $server = IO::Socket::INET->new(LocalPort => $conf_port,
                                    Listen    => 10 )
     or die "Error creating socket: $@\n";
 
+# Not sure if I'm crazy or not, but I can't see in strace where/how
+# Perl 5.6 sets blocking to 0 without this.  In Perl 5.8, IO::Socket::INET
+# obviously sets it from watching strace.
+IO::Handle::blocking($server, 0);
+
 my $accept_handler = sub {
     my $csock = $server->accept();
+    return unless $csock;
+
     printf("Listen child making a Client for %d.\n", fileno($csock))
 	if $DEBUG;
 
+    IO::Handle::blocking($csock, 0);
     setsockopt($csock, IPPROTO_TCP, TCP_NODELAY, pack("l", 1)) or die;
 
     # Enable keep alive
