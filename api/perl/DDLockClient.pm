@@ -10,7 +10,7 @@ DDLockClient - Client library for distributed lock daemon
   use DDLockClient ();
 
   my $cl = new DDLockClient (
-	servers => ['locks.localnet', 'locks2.localnet', 'localhost']
+	servers => ['locks.localnet:7004', 'locks2.localnet:7002', 'localhost']
   );
 
   # Do something that requires locking
@@ -55,6 +55,8 @@ BEGIN {
     use Socket qw{:DEFAULT :crlf};
     use IO::Socket::INET ();
 
+    use constant DEFAULT_PORT => 7002;
+
     use fields qw( name sockets );
 }
 
@@ -92,6 +94,8 @@ sub getlocks {
     @sockets = ();
   SERVER: foreach my $server ( @servers ) {
         my ( $host, $port ) = split /:/, $server;
+        $port ||= DEFAULT_PORT;
+
         my $sock = new IO::Socket::INET (
             PeerAddr    => $host,
             PeerPort    => $port,
@@ -101,7 +105,7 @@ sub getlocks {
             Blocking    => 1,
            ) or next SERVER;
 
-        $sock->print( "trylock lock=$lockname$CRLF" );
+        $sock->printf( "trylock lock=%s%s", eurl($lockname), CRLF );
         chomp( $res = <$sock> );
         die "$server: '$lockname' $res\n" unless $res =~ m{^ok\b}i;
 
@@ -127,7 +131,7 @@ sub release {
 
     $count = 0;
     while (( $sock = shift @{$self->{sockets}} )) {
-        $sock->print( "releaselock lock=$self->{name}$CRLF" );
+        $sock->printf( "releaselock lock=%s%s", eurl($self->{name}), CRLF );
         chomp( $res = <$sock> );
 
         unless ( $res =~ m{^ok\b}i ) {
@@ -143,6 +147,18 @@ sub release {
 }
 
 
+### FUNCTION: eurl( $arg )
+### URL-encode the given I<arg> and return it.
+sub eurl
+{
+    my $a = $_[0];
+    $a =~ s/([^a-zA-Z0-9_\,\-.\/\\\: ])/uc sprintf("%%%02x",ord($1))/eg;
+    $a =~ tr/ /+/;
+    return $a;
+}
+
+
+
 #####################################################################
 ###	D D F I L E L O C K   C L A S S
 #####################################################################
@@ -155,7 +171,7 @@ BEGIN {
     use File::Path qw{mkpath};
     use IO::File qw{};
 
-    use fields qw{name fh lock};
+    use fields qw{name fh path lock};
 }
 
 
@@ -174,8 +190,8 @@ sub new {
         mkpath $lockdir;
     }
 
-    my $lockfile = File::Spec->catfile( $lockdir, $name );
-    $self->{fh} = new IO::File $lockfile, O_WRONLY|O_CREAT
+    $self->{path} = File::Spec->catfile( $lockdir, $name );
+    $self->{fh} = new IO::File $self->{path}, O_WRONLY|O_CREAT
         or die "open: $lockfile: $!\n";
     $self->{lock} = new File::lockf( $self->{fh} )
         or die "lockf: $lockfile: $!\n";
@@ -197,8 +213,12 @@ sub new {
 ### Release the lock held by the object.
 sub release {
     my DDFileLock $self = shift;
-    return ( ($self->{lock}->ulock( 0 )) == 0 );
+    unlink $self->{path};
+    $self->{lock}->ulock( 0 );
 }
+
+
+DESTROY { my $self = shift; $self->release; }
 
 
 
