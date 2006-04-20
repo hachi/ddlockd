@@ -28,13 +28,28 @@ my (
     $nokeepalive,
    );
 my $conf_port = 7002;
+my $lock_type = "internal";
 
 Getopt::Long::GetOptions(
     'd|daemon'       => \$daemonize,
     'p|port=i'       => \$conf_port,
     'debug=i'        => \$DEBUG,
     'n|no-keepalive' => \$nokeepalive,
+    't|type=s'       => \$lock_type,
    );
+
+my $client_class;
+if ($lock_type eq 'internal') {
+    $client_class = "Client::Internal";
+}
+elsif($lock_type eq 'dlmfs') {
+    $client_class = "Client::DLMFS";
+}
+else {
+    die( "Unknown lock type of '$lock_type' specified.\n" );
+}
+
+$client_class->_setup;
 
 daemonize() if $daemonize;
 
@@ -81,7 +96,7 @@ my $accept_handler = sub {
         ) || die "Couldn't set keep-alive settings on socket (Not on Linux?)";
     }
 
-    my $client = Client->new($csock);
+    my $client = $client_class->new($csock);
     $client->watch_read(1);
 };
 
@@ -131,7 +146,6 @@ use fields (
             'read_buf',
 	    );
 
-our (%holder);  # hash of lock -> Client object holding it
 # TODO: out %waiters, lock -> arrayref of client waiters (waker should check not closed)
 
 sub new {
@@ -188,16 +202,6 @@ sub close {
     $self->SUPER::close;
 }
 
-sub _release_lock {
-    my Client $self = shift;
-    my $lock = shift;
-
-    # TODO: notify waiters
-    delete $self->{locks}{$lock};
-    delete $holder{$lock};
-    return 1;
-}
-
 
 # Client
 sub event_err { my $self = shift; $self->close; }
@@ -210,13 +214,7 @@ sub cmd_trylock {
     my $args = shift;
 
     my $lock = $args->{lock};
-    return $self->err_line("empty_lock") unless length($lock);
-    return $self->err_line("taken") if defined $holder{$lock};
-
-    $holder{$lock} = $self;
-    $self->{locks}{$lock} = 1;
-
-    return $self->ok_line();
+    return $self->_trylock( $lock );
 }
 
 # releases a lock or fails with 'didnthave'
@@ -238,9 +236,7 @@ sub cmd_locks {
     my $args = shift;
 
     $self->write("LOCKS:\n");
-    foreach my $k (sort keys %holder) {
-	$self->write("  $k = " . $holder{$k}->as_string . "\n");
-    }
+    $self->write( join( "\n", $self->_get_locks ) );
 
     return 1;
 }
@@ -308,6 +304,96 @@ sub decode_url_args
     return $ret;
 }
 
+package Client::Internal;
+
+use base 'Client';
+
+our (%holder);  # hash of lock -> Client object holding it
+# TODO: out %waiters, lock -> arrayref of client waiters (waker should check not closed)
+
+sub _setup {
+    # Nothing to set up.
+}
+
+sub _trylock {
+    my Client::Internal $self = shift;
+    my $lock = shift;
+
+    return $self->err_line("empty_lock") unless length($lock);
+    return $self->err_line("taken") if defined $holder{$lock};
+
+    $holder{$lock} = $self;
+    $self->{locks}{$lock} = 1;
+
+    return $self->ok_line();
+}
+
+sub _release_lock {
+    my Client::Internal $self = shift;
+    my $lock = shift;
+
+    # TODO: notify waiters
+    delete $self->{locks}{$lock};
+    delete $holder{$lock};
+    return 1;
+}
+
+sub _get_locks {
+    return map { "  $_ = " . $holder{$_}->as_string } (sort keys %holder);
+}
+
+package Client::DLMFS;
+
+use base 'Client';
+use Fcntl;
+use Errno qw(EEXIST ETXTBSY);
+
+sub FLAGS () { O_NONBLOCK | O_RDWR | O_CREAT | O_EXCL }
+sub PATH () { "/dlm/ddlockd" };
+
+sub _setup {
+    -d "/dlm" or die( "DLMFS mount at /dlm not found\n" );
+    mkdir PATH;
+}
+
+sub _trylock {
+    my Client::Internal $self = shift;
+    my $lock = shift;
+
+    return $self->err_line("empty_lock") unless length($lock);
+
+    if (sysopen( my $handle, PATH . "/$lock", FLAGS )) {
+        $self->{locks}{$lock} = 1;
+	return $self->ok_line();
+    }
+    else {
+        if ($! == EEXIST) {
+            return $self->err_line( "local taken" );
+	}
+	elsif( $! == ETXTBSY) {
+            unlink( PATH . "/$lock" );
+	    return $self->err_line( "remote taken" );
+	}
+	else {
+            return $self->err_line( "unknown: $!" );
+	}
+    }
+}
+
+sub _release_lock {
+    my Client::Internal $self = shift;
+    my $lock = shift;
+
+    # TODO: notify waiters
+    delete $self->{locks}{$lock};
+    unlink( PATH . "/$lock" );
+    return 1;
+}
+
+sub _get_locks {
+# TODO
+#    return map { "  $_ = " . $holder{$_}->as_string } (sort keys %holder);
+}
 
 # Local Variables:
 # mode: perl
