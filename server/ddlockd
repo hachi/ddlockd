@@ -196,7 +196,7 @@ sub close {
     my Client $self = shift;
 
     foreach my $lock (keys %{$self->{locks}}) {
-	_release_lock($self, $lock);
+	$self->_release_lock($lock);
     }
 
     $self->SUPER::close;
