@@ -92,7 +92,7 @@ my $accept_handler = sub {
     return unless $csock;
 
     printf("Listen child making a Client for %d.\n", fileno($csock))
-	if $DEBUG;
+        if $DEBUG;
 
     IO::Handle::blocking($csock, 0);
     setsockopt($csock, IPPROTO_TCP, TCP_NODELAY, pack("l", 1)) or die;
@@ -155,7 +155,7 @@ use base 'Danga::Socket';
 use fields (
             'locks',  # hashref of locks held by this connection. values are 1
             'read_buf',
-	    );
+            );
 
 # TODO: out %waiters, lock -> arrayref of client waiters (waker should check not closed)
 
@@ -207,7 +207,7 @@ sub close {
     my Client $self = shift;
 
     foreach my $lock (keys %{$self->{locks}}) {
-	$self->_release_lock($lock);
+        $self->_release_lock($lock);
     }
 
     $self->SUPER::close;
@@ -375,19 +375,19 @@ sub _trylock {
 
     if (sysopen( my $handle, PATH . "/$lock", FLAGS )) {
         $self->{locks}{$lock} = 1;
-	return $self->ok_line();
+        return $self->ok_line();
     }
     else {
         if ($! == EEXIST) {
             return $self->err_line( "local taken" );
-	}
-	elsif( $! == ETXTBSY) {
+        }
+        elsif( $! == ETXTBSY) {
             unlink( PATH . "/$lock" );
-	    return $self->err_line( "remote taken" );
-	}
-	else {
+            return $self->err_line( "remote taken" );
+        }
+        else {
             return $self->err_line( "unknown: $!" );
-	}
+        }
     }
 }
 
@@ -422,7 +422,7 @@ sub _setup {
     my Client::DBI $self = shift;
     ($hostname, $table) = @_;
     $dbh = DBI->connect( 'dbi:mysql:dbname=sixalock', '', '', {AutoCommit => 0} ) or die;
-    #$dbh->{HandleError} = 
+    #$dbh->{HandleError} =
 }
 
 sub _trylock {
@@ -431,22 +431,22 @@ sub _trylock {
 
     my $local_locks = $self->{locks};
     exists( $local_locks->{$lock} ) and return $self->err_line( "local taken" );
-    
+
     $dbh->do( 'START TRANSACTION' ) or return $self->err_line( "Transaction failed to start" );
 
     my $sth = $dbh->prepare( "SELECT * FROM $table WHERE name=?" );
     $sth->execute( $lock )
-    	or return $self->err_line( "STH->execute failed" );
+        or return $self->err_line( "STH->execute failed" );
     my $ary = $sth->fetchall_arrayref;
     ref($ary) eq 'ARRAY'
-    	or return $self->err_line( "DBI->selectall_arrayref returned non-arrayref" );
+        or return $self->err_line( "DBI->selectall_arrayref returned non-arrayref" );
     scalar @$ary == 0
-    	or return $self->err_line( "remote taken" );
-    
+        or return $self->err_line( "remote taken" );
+
     $dbh->do( "INSERT INTO $table (name) VALUES (?)", {}, $lock )
-    	or return $self->err_line( "INSERT failed" );
+        or return $self->err_line( "INSERT failed" );
     $dbh->do( 'COMMIT' )
-    	or return $self->err_line( "COMMIT failed" );
+        or return $self->err_line( "COMMIT failed" );
     return $self->ok_line();
 }
 
@@ -457,8 +457,8 @@ sub _release_lock {
     my $locks = $self->{locks};
     if (exists( $locks->{$lock} )) {
         delete $locks->{$lock};
-	$dbh->do( "SELECT AND DELETE * FROM $table WHERE name=?", {}, $lock );
-	return 1;
+        $dbh->do( "SELECT AND DELETE * FROM $table WHERE name=?", {}, $lock );
+        return 1;
     }
     else {
         return 0;
