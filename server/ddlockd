@@ -2,15 +2,15 @@
 #
 # Danga's Distributed Lock Daemon
 #
-# Status: 2004-05-18:  quick hack.  not for production yet.
-#
 # Copyright 2004, Danga Interactive
+# Copyright 2005-2006, Six Apart, Ltd.
 #
 # Authors:
 #   Brad Fitzpatrick <brad@danga.com>
+#   Jonathan Steinert <jsteinert@sixapart.com>
 #
 # License:
-#   undecided.
+#   terms of Perl itself.
 #
 
 use strict;
@@ -412,7 +412,6 @@ package Client::DBI;
 
 use base 'Client';
 use fields qw(dbh);
-use DBI;
 
 my $hostname;
 my $table;
@@ -421,8 +420,8 @@ my $dbh;
 sub _setup {
     my Client::DBI $self = shift;
     ($hostname, $table) = @_;
+    eval "use DBI; 1" or die "No DBI available?";
     $dbh = DBI->connect( 'dbi:mysql:dbname=sixalock', '', '', {AutoCommit => 0} ) or die;
-    #$dbh->{HandleError} =
 }
 
 sub _trylock {
