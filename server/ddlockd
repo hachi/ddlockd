@@ -237,7 +237,7 @@ sub cmd_releaselock {
     return $self->err_line("empty_lock") unless length($lock);
     return $self->err_line("didnthave") unless $self->{locks}{$lock};
 
-    _release_lock($self, $lock);
+    $self->_release_lock($lock);
     return $self->ok_line;
 }
 

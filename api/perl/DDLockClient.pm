@@ -10,7 +10,7 @@ DDLockClient - Client library for distributed lock daemon
   use DDLockClient ();
 
   my $cl = new DDLockClient (
-	servers => ['locks.localnet:7004', 'locks2.localnet:7002', 'localhost']
+        servers => ['locks.localnet:7004', 'locks2.localnet:7002', 'localhost']
   );
 
   # Do something that requires locking
@@ -47,76 +47,76 @@ Copyright (c) 2004 Danga Interactive, Inc.
 ###########################################################################
 
 #####################################################################
-###	D D L O C K   C L A S S
+###     D D L O C K   C L A S S
 #####################################################################
 package DDLock;
+use strict;
+use Socket qw{:DEFAULT :crlf};
+use IO::Socket::INET ();
 
-BEGIN {
-    use Socket qw{:DEFAULT :crlf};
-    use IO::Socket::INET ();
+use constant DEFAULT_PORT => 7002;
 
-    use constant DEFAULT_PORT => 7002;
-
-    use fields qw( name sockets pid );
-}
+use fields qw( name sockets pid client );
 
 
-
-### (CONSTRUCTOR) METHOD: new( $name, @sockets )
+### (CONSTRUCTOR) METHOD: new( $client, $name, @socket_names )
 ### Create a new lock object that corresponds to the specified I<name> and is
 ### held by the given I<sockets>.
 sub new {
     my DDLock $self = shift;
     $self = fields::new( $self ) unless ref $self;
 
-    $self->{pid} = $$;
-    $self->{name} = shift;
-    $self->{sockets} = $self->getlocks( $self->{name}, @_ );
-
+    $self->{client}  = shift;
+    $self->{name}    = shift;
+    $self->{pid}     = $$;
+    $self->{sockets} = $self->getlocks(@_);
     return $self;
 }
 
 
-### (PROTECTED) METHOD: getlocks( $lockname, @servers )
+### (PROTECTED) METHOD: getlocks( @servers )
 ### Try to obtain locks with the specified I<lockname> from one or more of the
 ### given I<servers>.
 sub getlocks {
     my DDLock $self = shift;
-    my $lockname = shift;
+    my $lockname = $self->{name};
     my @servers = @_;
 
-    my (
-        @sockets,
-        $sock,
-        $res,
-       );
+    my @addrs = ();
 
     # First create connected sockets to all the lock hosts
-    @sockets = ();
   SERVER: foreach my $server ( @servers ) {
         my ( $host, $port ) = split /:/, $server;
         $port ||= DEFAULT_PORT;
+        my $addr = "$host:$port";
 
-        my $sock = new IO::Socket::INET (
-            PeerAddr    => $host,
-            PeerPort    => $port,
-            Proto       => "tcp",
-            Type        => SOCK_STREAM,
-            ReuseAddr   => 1,
-            Blocking    => 1,
-           ) or next SERVER;
+        my $sock = $self->{client}->get_sock($addr)
+            or next SERVER;
 
         $sock->printf( "trylock lock=%s%s", eurl($lockname), CRLF );
-        chomp( $res = <$sock> );
+        chomp( my $res = <$sock> );
         die "$server: '$lockname' $res\n" unless $res =~ m{^ok\b}i;
 
-        push @sockets, $sock;
+        push @addrs, $addr;
     }
 
-    die "No available lock hosts" unless @sockets;
-    return \@sockets;
+    die "No available lock hosts" unless @addrs;
+    return \@addrs;
 }
 
+sub DESTROY {
+    my $self = shift;
+    return unless $self->{sockets};
+
+    foreach my $addr (@{$self->{sockets}}) {
+        my $sock = $self->{client}->get_sock_onlycache($addr)
+            or next;
+
+        $sock->printf("releaselock lock=%s%s", eurl($self->{name}), CRLF);
+        my $res;
+        chomp( $res = <$sock> );
+    }
+}
 
 ### METHOD: release()
 ### Release the lock held by the lock object. Returns the number of sockets that
@@ -164,7 +164,7 @@ sub eurl
 
 
 #####################################################################
-###	D D F I L E L O C K   C L A S S
+###     D D F I L E L O C K   C L A S S
 #####################################################################
 package DDFileLock;
 
@@ -211,7 +211,7 @@ sub new {
     # Now try to make a hard link to it
     link( $tmpfile, $lockfile )
         or die "link: $tmpfile -> $lockfile: $!";
-    unlink $tmpfile or die "unlink: $tempfile: $!";
+    unlink $tmpfile or die "unlink: $tmpfile: $!";
 
     $self->{path} = $lockfile;
     $self->{tmpfile} = $tmpfile;
@@ -248,13 +248,14 @@ DESTROY {
 
 
 #####################################################################
-###	D D L O C K C L I E N T   C L A S S
+###     D D L O C K C L I E N T   C L A S S
 #####################################################################
 package DDLockClient;
 use strict;
+use Socket;
 
 BEGIN {
-    use fields qw( servers lockdir );
+    use fields qw( servers lockdir sockcache );
     use vars qw{$Error};
 }
 
@@ -262,6 +263,25 @@ $Error = undef;
 
 our $Debug = 0;
 
+sub get_sock_onlycache {
+    my ($self, $addr) = @_;
+    return $self->{sockcache}{$addr};
+}
+
+sub get_sock {
+    my ($self, $addr) = @_;
+    my $sock = $self->{sockcache}{$addr};
+    return $sock if $sock && getpeername($sock);
+    # TODO: cache unavailability for 'n' seconds?
+    return $self->{sockcache}{$addr} =
+        IO::Socket::INET->new(
+                              PeerAddr    => $addr,
+                              Proto       => "tcp",
+                              Type        => SOCK_STREAM,
+                              ReuseAddr   => 1,
+                              Blocking    => 1,
+                              );
+}
 
 ### (CLASS) METHOD: DebugLevel( $level )
 sub DebugLevel {
@@ -296,7 +316,7 @@ sub RealDebugMsg {
 
 
 ### (CONSTRUCTOR) METHOD: new( %args )
-### Create a new DDLockClient 
+### Create a new DDLockClient
 sub new {
     my DDLockClient $self = shift;
     my %args = @_;
@@ -306,6 +326,7 @@ sub new {
         unless !exists $args{servers} || ref $args{servers} eq 'ARRAY';
     $self->{servers} = $args{servers} || [];
     $self->{lockdir} = $args{lockdir} || '';
+    $self->{sockcache} = {};  # "host:port" -> IO::Socket::INET
 
     return $self;
 }
@@ -323,7 +344,7 @@ sub trylock {
     # If there are servers to connect to, use a network lock
     if ( @{$self->{servers}} ) {
         $self->DebugMsg( 2, "Creating a new DDLock object." );
-        $lock = eval { DDLock->new($lockname, @{$self->{servers}}) };
+        $lock = eval { DDLock->new($self, $lockname, @{$self->{servers}}) };
     }
 
     # Otherwise use a file lock
