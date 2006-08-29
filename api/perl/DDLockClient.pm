@@ -84,6 +84,18 @@ sub getlocks {
 
     my @addrs = ();
 
+    my $fail = sub {
+        my $msg = shift;
+        # release any locks that we did get:
+        foreach my $addr (@addrs) {
+            my $sock = $self->{client}->get_sock($addr)
+                or next;
+            $sock->printf("releaselock lock=%s%s", eurl($self->{name}), CRLF);
+            warn scalar(<$sock>);
+        }
+        die $msg;
+    };
+
     # First create connected sockets to all the lock hosts
   SERVER: foreach my $server ( @servers ) {
         my ( $host, $port ) = split /:/, $server;
@@ -95,7 +107,7 @@ sub getlocks {
 
         $sock->printf( "trylock lock=%s%s", eurl($lockname), CRLF );
         chomp( my $res = <$sock> );
-        die "$server: '$lockname' $res\n" unless $res =~ m{^ok\b}i;
+        $fail->("$server: '$lockname' $res\n") unless $res =~ m{^ok\b}i;
 
         push @addrs, $addr;
     }
@@ -111,10 +123,11 @@ sub DESTROY {
     foreach my $addr (@{$self->{sockets}}) {
         my $sock = $self->{client}->get_sock_onlycache($addr)
             or next;
-
-        $sock->printf("releaselock lock=%s%s", eurl($self->{name}), CRLF);
-        my $res;
-        chomp( $res = <$sock> );
+        eval {
+            $sock->printf("releaselock lock=%s%s", eurl($self->{name}), CRLF);
+            my $res;
+            chomp( $res = <$sock> );
+        };
     }
 }
 
