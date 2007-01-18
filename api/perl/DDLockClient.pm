@@ -56,7 +56,7 @@ use IO::Socket::INET ();
 
 use constant DEFAULT_PORT => 7002;
 
-use fields qw( name sockets pid client );
+use fields qw( name sockets pid client hooks );
 
 
 ### (CONSTRUCTOR) METHOD: new( $client, $name, @socket_names )
@@ -70,6 +70,7 @@ sub new {
     $self->{name}    = shift;
     $self->{pid}     = $$;
     $self->{sockets} = $self->getlocks(@_);
+    $self->{hooks}   = {}; # hookname -> coderef
     return $self;
 }
 
@@ -116,8 +117,37 @@ sub getlocks {
     return \@addrs;
 }
 
+sub name {
+    my DDLock $self = shift;
+    return $self->{name};
+}
+
+sub set_hook {
+    my DDLock $self = shift;
+    my $hookname = shift || return;
+
+    if (@_) {
+        $self->{hooks}->{$hookname} = shift;
+    } else {
+        delete $self->{hooks}->{$hookname};
+    }
+}
+
+sub run_hook {
+    my DDLock $self = shift;
+    my $hookname = shift || return;
+
+    if (my $hook = $self->{hooks}->{$hookname}) {
+        eval { $hook->($self) };
+        warn "DDLock hook '$hookname' threw error: $@" if $@;
+    }
+}
+
 sub DESTROY {
     my $self = shift;
+
+    $self->run_hook('DESTROY');
+
     return unless $self->{sockets};
 
     foreach my $addr (@{$self->{sockets}}) {
@@ -136,6 +166,8 @@ sub DESTROY {
 ### were released on success, and dies with an error on failure.
 sub release {
     my DDLock $self = shift;
+
+    $self->run_hook('release');
 
     my (
         $count,
@@ -187,7 +219,7 @@ BEGIN {
     use File::Path qw{mkpath};
     use IO::File qw{};
 
-    use fields qw{name path tmpfile pid};
+    use fields qw{name path tmpfile pid hooks};
 }
 
 
@@ -228,15 +260,42 @@ sub new {
 
     $self->{path} = $lockfile;
     $self->{tmpfile} = $tmpfile;
+    $self->{hooks} = {};
 
     return $self;
 }
 
+sub name {
+    my DDFileLock $self = shift;
+    return $self->{name};
+}
+
+sub set_hook {
+    my DDFileLock $self = shift;
+    my $hookname = shift || return;
+
+    if (@_) {
+        $self->{hooks}->{$hookname} = shift;
+    } else {
+        delete $self->{hooks}->{$hookname};
+    }
+}
+
+sub run_hook {
+    my DDFileLock $self = shift;
+    my $hookname = shift || return;
+
+    if (my $hook = $self->{hooks}->{$hookname}) {
+        eval { $hook->($self) };
+        warn "DDFileLock hook '$hookname' threw error: $@" if $@;
+    }
+}
 
 ### METHOD: release()
 ### Release the lock held by the object.
 sub release {
     my DDFileLock $self = shift;
+    $self->run_hook('release');
     return unless $self->{path};
     unlink $self->{path} or die "unlink: $self->{path}: $!";
     unlink $self->{tmpfile};
@@ -256,6 +315,7 @@ sub eurl
 
 DESTROY {
     my $self = shift;
+    $self->run_hook('DESTROY');
     $self->release if $$ == $self->{pid};
 }
 
@@ -268,7 +328,7 @@ use strict;
 use Socket;
 
 BEGIN {
-    use fields qw( servers lockdir sockcache );
+    use fields qw( servers lockdir sockcache hooks );
     use vars qw{$Error};
 }
 
@@ -340,10 +400,32 @@ sub new {
     $self->{servers} = $args{servers} || [];
     $self->{lockdir} = $args{lockdir} || '';
     $self->{sockcache} = {};  # "host:port" -> IO::Socket::INET
+    $self->{hooks} = {};      # hookname -> coderef
 
     return $self;
 }
 
+
+sub set_hook {
+    my DDLockClient $self = shift;
+    my $hookname = shift || return;
+
+    if (@_) {
+        $self->{hooks}->{$hookname} = shift;
+    } else {
+        delete $self->{hooks}->{$hookname};
+    }
+}
+
+sub run_hook {
+    my DDLockClient $self = shift;
+    my $hookname = shift || return;
+
+    if (my $hook = $self->{hooks}->{$hookname}) {
+        eval { $hook->($self) };
+        warn "DDLockClient hook '$hookname' threw error: $@" if $@;
+    }
+}
 
 ### METHOD: trylock( $name )
 ### Try to get a lock from the lock daemons with the specified I<name>. Returns
@@ -351,6 +433,8 @@ sub new {
 sub trylock {
     my DDLockClient $self = shift;
     my $lockname = shift;
+
+    $self->run_hook('trylock', $lockname);
 
     my $lock;
 
@@ -368,9 +452,12 @@ sub trylock {
 
     # If no lock was acquired, fail and put the reason in $Error.
     unless ( $lock ) {
+        $self->run_hook('trylock_failure');
         return $self->lock_fail( $@ ) if $@;
         return $self->lock_fail( "Unknown failure." );
     }
+
+    $self->run_hook('trylock_success', $lockname, $lock);
 
     return $lock;
 }
