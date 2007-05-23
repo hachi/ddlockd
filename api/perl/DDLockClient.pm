@@ -144,21 +144,12 @@ sub run_hook {
 }
 
 sub DESTROY {
-    my $self = shift;
+    my DDLock $self = shift;
 
     $self->run_hook('DESTROY');
+    eval { $self->_release_lock(@_) };
 
-    return unless $self->{sockets};
-
-    foreach my $addr (@{$self->{sockets}}) {
-        my $sock = $self->{client}->get_sock_onlycache($addr)
-            or next;
-        eval {
-            $sock->printf("releaselock lock=%s%s", eurl($self->{name}), CRLF);
-            my $res;
-            chomp( $res = <$sock> );
-        };
-    }
+    return;
 }
 
 ### METHOD: release()
@@ -168,22 +159,32 @@ sub release {
     my DDLock $self = shift;
 
     $self->run_hook('release');
+    return $self->_release_lock(@_);
+}
 
-    my (
-        $count,
-        $res,
-        $sock,
-       );
+sub _release_lock {
+    my DDLock $self = shift;
+
+    my $count = 0;
+
+    my $sockets = $self->{sockets} or return;
 
     # lock server might have gone away, but we don't really care.
     local $SIG{'PIPE'} = "IGNORE";
 
-    $count = 0;
-    while (( $sock = shift @{$self->{sockets}} )) {
-        $sock->printf( "releaselock lock=%s%s", eurl($self->{name}), CRLF );
-        chomp( $res = <$sock> );
+    foreach my $addr (@$sockets) {
+        my $sock = $self->{client}->get_sock_onlycache($addr)
+            or next;
 
-        if ( $res && $res !~ m{^ok\b}i ) {
+        my $res;
+
+        eval {
+            $sock->printf("releaselock lock=%s%s", eurl($self->{name}), CRLF);
+            $res = <$sock>;
+            chomp $res;
+        };
+
+        if ($res && $res !~ m/ok\b/i) {
             my $port = $sock->peerport;
             my $addr = $sock->peerhost;
             die "releaselock ($addr): $res\n";
@@ -205,8 +206,6 @@ sub eurl
     $a =~ tr/ /+/;
     return $a;
 }
-
-
 
 #####################################################################
 ###     D D F I L E L O C K   C L A S S
@@ -452,8 +451,9 @@ sub trylock {
 
     # If no lock was acquired, fail and put the reason in $Error.
     unless ( $lock ) {
+        my $eval_error = $@;
         $self->run_hook('trylock_failure');
-        return $self->lock_fail( $@ ) if $@;
+        return $self->lock_fail( $eval_error ) if $eval_error;
         return $self->lock_fail( "Unknown failure." );
     }
 

@@ -36,3 +36,5 @@ ok($cl, "Got a client object");
     ok(!defined($lock2), "Got no lock for 'test_c' again without release");
     diag "Error was '$DDLockClient::Error'";
 }
+
+# vim: filetype=perl
