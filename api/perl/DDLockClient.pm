@@ -138,6 +138,7 @@ sub run_hook {
     my $hookname = shift || return;
 
     if (my $hook = $self->{hooks}->{$hookname}) {
+        local $@;
         eval { $hook->($self) };
         warn "DDLock hook '$hookname' threw error: $@" if $@;
     }
@@ -147,6 +148,7 @@ sub DESTROY {
     my DDLock $self = shift;
 
     $self->run_hook('DESTROY');
+    local $@;
     eval { $self->_release_lock(@_) };
 
     return;
@@ -285,6 +287,7 @@ sub run_hook {
     my $hookname = shift || return;
 
     if (my $hook = $self->{hooks}->{$hookname}) {
+        local $@;
         eval { $hook->($self) };
         warn "DDFileLock hook '$hookname' threw error: $@" if $@;
     }
@@ -421,6 +424,7 @@ sub run_hook {
     my $hookname = shift || return;
 
     if (my $hook = $self->{hooks}->{$hookname}) {
+        local $@;
         eval { $hook->($self) };
         warn "DDLockClient hook '$hookname' threw error: $@" if $@;
     }
@@ -436,6 +440,7 @@ sub trylock {
     $self->run_hook('trylock', $lockname);
 
     my $lock;
+    local $@;
 
     # If there are servers to connect to, use a network lock
     if ( @{$self->{servers}} ) {
