@@ -42,6 +42,10 @@ Getopt::Long::GetOptions(
     'T|table=s'  => \$table,
    );
 
+# Statistics counters
+my $lock_successes = 0;
+my $lock_failures  = 0;
+
 my $client_class;
 my @client_options;
 if ($lock_type eq 'internal') {
@@ -218,6 +222,19 @@ sub close {
 sub event_err { my $self = shift; $self->close; }
 sub event_hup { my $self = shift; $self->close; }
 
+sub cmd_status {
+    my Client $self = shift;
+
+    my $runtime = time - $^T;
+
+    $self->write("STATUS: OK\n");
+    $self->write("SUCCESSES: $lock_successes\n");
+    $self->write("FAILURES: $lock_failures\n");
+    $self->write("RUNTIME: $runtime\n");
+    $self->write("\n");
+
+    return 1;
+}
 
 # gets a lock or fails with 'taken'
 sub cmd_trylock {
@@ -225,7 +242,15 @@ sub cmd_trylock {
     my $args = shift;
 
     my $lock = $args->{lock};
-    return $self->_trylock( $lock );
+    my $lockstate = $self->_trylock( $lock );
+
+    if ($lockstate) {
+        $lock_successes++;
+    } else {
+        $lock_failures++;
+    }
+
+    return $lockstate;
 }
 
 # releases a lock or fails with 'didnthave'
@@ -248,6 +273,7 @@ sub cmd_locks {
 
     $self->write("LOCKS:\n");
     $self->write( join( "\n", $self->_get_locks ) );
+    $self->write("\n");
 
     return 1;
 }
