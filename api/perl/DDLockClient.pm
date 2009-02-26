@@ -55,6 +55,7 @@ use Socket qw{:DEFAULT :crlf};
 use IO::Socket::INET ();
 
 use constant DEFAULT_PORT => 7002;
+use constnat DEBUG => 0;
 
 use fields qw( name sockets pid client hooks );
 
@@ -92,7 +93,7 @@ sub getlocks {
             my $sock = $self->{client}->get_sock($addr)
                 or next;
             $sock->printf("releaselock lock=%s%s", eurl($self->{name}), CRLF);
-            warn scalar(<$sock>);
+            warn scalar(<$sock>) if DEBUG;
         }
         die $msg;
     };
