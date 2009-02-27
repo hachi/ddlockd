@@ -55,7 +55,7 @@ use Socket qw{:DEFAULT :crlf};
 use IO::Socket::INET ();
 
 use constant DEFAULT_PORT => 7002;
-use constnat DEBUG => 0;
+use constant DEBUG => 0;
 
 use fields qw( name sockets pid client hooks );
 
