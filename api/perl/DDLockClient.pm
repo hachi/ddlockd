@@ -93,7 +93,8 @@ sub getlocks {
             my $sock = $self->{client}->get_sock($addr)
                 or next;
             $sock->printf("releaselock lock=%s%s", eurl($self->{name}), CRLF);
-            warn scalar(<$sock>) if DEBUG;
+            my $result = <$sock>;
+            warn $result if DEBUG;
         }
         die $msg;
     };
